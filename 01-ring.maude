@@ -1,0 +1,131 @@
+mod Ring-project is 
+	pr NAT-LIST .
+	protecting NAT .
+    inc CONFIGURATION .
+
+	op Node : -> Cid [ctor] .
+
+	op node : Nat -> Oid [ctor] .
+
+	op elected : Bool -> Attribute .
+
+	op buff : NatList -> Attribute .
+
+	op turn : Bool -> Attribute .
+
+	op iden : Configuration Configuration -> Configuration . 
+
+	sort PState .
+	ops voted noVoted voting : -> PState .
+	op state : PState -> Attribute .
+
+	op N : -> Nat .
+	eq N = 3 .
+
+	vars n m q : Nat .
+	vars L I Q : NatList .
+
+
+	rl[voting] : 	< node(n) : Node | elected(false), buff(nil), state(noVoted), turn(true) > =>
+					< node(n) : Node | elected(false), buff(nil), state(voting),turn(true) > .
+
+	crl[getTurn] : 	< node(n) : Node | elected(false),buff(nil),state(noVoted),turn(false) >
+					< node(m) : Node | elected(false),buff(nil),state(noVoted),turn(false) >
+					< node(q) : Node | elected(false),buff(nil),state(noVoted),turn(false) > =>
+					< node(n) : Node | elected(false),buff(nil),state(noVoted),turn(false) >
+					< node(m) : Node | elected(false),buff(nil),state(noVoted),turn(true) >
+					< node(q) : Node | elected(false),buff(nil),state(noVoted),turn(false) >
+					if n =/= m /\ q =/= n /\ m =/= q /\ n < m /\ q > m /\ m := m rem N /\ n := n rem N /\ q := q rem N .
+
+	crl[vote] : < node( n ) : Node | elected(false), buff(L), state(voting),turn(true) >
+				< node( m ) : Node | elected(false), buff(I), state(noVoted),turn(false) > =>
+				< node( n ) : Node | elected(false), buff(L), state(voted),turn(false) >
+				< node( m ) : Node | elected(false), buff(n I), state(noVoted),turn(false) >
+				if m := ( n + 1 ) rem N . 
+
+	crl[elect] : 	< node(n) : Node | elected(false), buff(L), state(voted),turn(false) > =>
+					< node(n) : Node | elected(true), buff(L), state(voted),turn(false) >
+					if size(L) == N .
+
+--- elected must be the max on size of NatList 'L'
+
+
+	op init : -> Configuration .
+	eq init = init(N) .
+	op init : Nat -> Configuration .
+	eq init(0) = none .
+	eq init(s(n)) = init(n) mkNode(n) .
+	op mkNode : Nat -> Configuration .
+	eq mkNode(n) = < node(n) : Node | elected(false), buff(nil), state(noVoted),turn(false) > .
+
+endm
+
+load model-checker .
+
+mod LE-MCK is 
+	inc Ring-project .
+	inc MODEL-CHECKER .
+
+	subsort Configuration < State .
+
+    --- Predicates
+    vars n m : Nat .
+    vars AS AS' : AttributeSet .
+    vars C C' : Configuration .
+
+    op mutualEx : -> Prop .
+    ceq ( < node(n) : Node | state(voting), AS > < node(m) : Node | state(voting), AS' > C ) |= mutualEx = false
+    	if sd(n,m) == 1 or (n == 0 and m ==(sd(N,1))) .
+	eq C |= mutualEx = true [owise] .
+
+	op noVoted? : Nat -> Prop .
+	eq ( < node(n) : Node | state(noVoted), turn(false), AS > C) |= noVoted?(n) = true .
+	eq C |= noVoted?(n) = false [owise] .
+
+	op voting? : Nat -> Prop .
+	eq ( < node(n) : Node | state(voting), turn(true), AS > C) |= voting?(n) = true .
+	eq C |= voting?(n) = false [owise] .
+
+	op voted? : Nat -> Prop .
+	eq ( < node(n) : Node | state(voted),turn(false), AS > C) |= voted?(n) = true .
+	eq C |= voted?(n) = false [owise] .
+
+	op elected? : Nat -> Prop .
+	eq ( < node(n) : Node | state(voted),elected(true), AS > C) |= elected?(n) = true .
+	eq C |= elected?(n) = false [owise] .
+
+	--- fairness to eventualy all node do vote
+	op fairness1 : -> Formula .
+    op $fairness1 : Nat -> Formula .
+    eq fairness1 = $fairness1(N) .
+    eq $fairness1(n) =
+	(([] <> noVoted?(n)) -> ([] <> voting?(n))) /\
+	(if n == 0 then True else $fairness1(sd(n,1)) fi) .
+
+	--- fairness to eventualy all node be elected
+	op fairness2 : -> Formula .
+	op $fairness2 : Nat -> Formula .
+	eq fairness2 = $fairness2(N) .
+	eq $fairness2(n) = 
+	(([] <> voted?(n)) -> ([] <> elected?(n))) /\
+	(if n == 0 then True else $fairness2(sd(1,n)) fi) .
+
+endm
+eof
+
+red init .
+search init =>* C:Configuration .
+show search graph .
+
+--- Some tests.
+--- Safety
+red modelCheck (init, [] mutualEx) .
+--- Eventualy all nodes will vote
+red modelCheck (init, fairness1 -> <> voting?(0)) .
+--- Enventualy any node will be elected
+red modelCheck (init, fairness2 -> <> elected?(0)) .
+--- liveness 
+--- if node(0) don't voted yet, so evenetualy it will voted (No)
+red modelCheck (init, [] (noVoted?(0) -> <> voted?(0))) .
+--- with fairness (Yes)
+red modelCheck (init, fairness1 -> [] (noVoted?(0) -> <> voted?(0))) .
